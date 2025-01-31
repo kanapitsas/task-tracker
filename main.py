@@ -274,11 +274,6 @@ class TaskTracker:
             return
 
         old_paused = self.paused
-        if self.active_task:
-            # Finalize the old session (count=1 by default)
-            old_paused = self.finalize_session(count=1)
-
-        # Now start a new in-memory session for the new task
         self.start_session_for_task(new_task)
 
         # If we were running before, continue running
