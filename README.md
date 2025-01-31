@@ -1,6 +1,6 @@
 # Task Tracker CLI
 
-![License](https://img.shields.io/github/license/kanapitsas/task-tracker-cli)
+![License](https://img.shields.io/github/license/kanapitsas/task-tracker)
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![SQLite](https://img.shields.io/badge/SQLite-3.34.0%2B-blue)
 
