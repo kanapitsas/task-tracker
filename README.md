@@ -88,7 +88,7 @@ Once the application is running, you'll interact with it via the command line. B
 | `help`                       | Displays a help message with all available commands.                                                     |
 | `switch <task>`              | Switches the active task to `<task>`. Finalizes the current session if running.                          |
 | `start` or `s`               | Starts timing the currently active task.                                                                |
-| `pause` or `p`               | Pauses the current session, finalizing it with a count of 0.                                             |
+| `pause` or `p`               | Pauses the current session.                                             |
 | `<number>`                   | Increments the current task's count by the specified number and finalizes the session with that count.   |
 | `<Enter>`                    | Increments the current task's count by 1 and finalizes the session.                                       |
 | `set-price <task> <price>`   | Sets or updates the fixed payout of `<task>` to `<price>` euros.                                         |
@@ -98,7 +98,9 @@ Once the application is running, you'll interact with it via the command line. B
 | `stats day <YYYY-MM-DD>`     | Shows statistics for a specific day.                                                                     |
 | `stats month <YYYY-MM>`      | Shows statistics for a specific month.                                                                    |
 | `history [n]`                | Displays the last `n` task sessions. If `n` is omitted, shows all sessions for today.                    |
+| `rm <session_id>`            | Removes a specific session from the history by its ID.                                                   |
 | `exit` or `quit`             | Finalizes any running session and exits the application.                                                 |
+```
 
 ---
 
