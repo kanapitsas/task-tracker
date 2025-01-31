@@ -402,181 +402,109 @@ class TaskTracker:
 
         console.print(table)
 
+    def _get_date_range_utc(self, date_str: Optional[str], is_monthly: bool) -> tuple:
+        """Get UTC datetime range for daily or monthly summaries."""
+        if date_str is None:
+            now_local = datetime.now(TIMEZONE)
+            date_str = now_local.strftime("%Y-%m" if is_monthly else "%Y-%m-%d")
+
+        if is_monthly:
+            year, month = map(int, date_str.split("-"))
+            start = TIMEZONE.localize(datetime(year, month, 1))
+            if month == 12:
+                end = TIMEZONE.localize(datetime(year + 1, 1, 1))
+            else:
+                end = TIMEZONE.localize(datetime(year, month + 1, 1))
+        else:
+            start = TIMEZONE.localize(datetime.strptime(date_str, "%Y-%m-%d"))
+            end = start + timedelta(days=1)
+
+        return start.astimezone(pytz.utc), end.astimezone(pytz.utc)
+
+    def _generate_summary_table(self, rows, period_str: str, is_monthly: bool) -> None:
+        """Generate and display summary table for daily or monthly data."""
+        if not rows:
+            period_type = "month" if is_monthly else "day"
+            console.print(f"[bold magenta]No sessions found for {period_type} {period_str}[/]")
+            return
+
+        aggregate = {}
+        for (task, dur, cnt, p, st) in rows:
+            if task not in aggregate:
+                aggregate[task] = {'count': 0, 'duration': 0.0, 'earned': 0.0}
+            aggregate[task]['count'] += cnt
+            aggregate[task]['duration'] += dur
+            aggregate[task]['earned'] += (cnt * p)
+
+        period_type = "Monthly" if is_monthly else "Daily"
+        table = Table(title=f"{period_type} Summary for {period_str}", header_style="bold magenta")
+        table.add_column("Task", style="cyan")
+        table.add_column("Count", justify="right")
+        table.add_column("Duration", justify="right")
+        table.add_column("Earned (€)", justify="right")
+        table.add_column("Hourly Rate (€ / hr)", justify="right")
+
+        total_count = total_time = total_earned = 0.0
+
+        for task in sorted(aggregate.keys()):
+            data = aggregate[task]
+            hours = data['duration'] / 3600 if data['duration'] > 0 else 0
+            hourly_rate = data['earned'] / hours if hours > 0 else 0
+
+            table.add_row(
+                task,
+                str(data['count']),
+                format_duration(data['duration']),
+                f"{data['earned']:.2f}",
+                f"{hourly_rate:.2f}"
+            )
+
+            total_count += data['count']
+            total_time += data['duration']
+            total_earned += data['earned']
+
+        tot_hours = total_time / 3600 if total_time > 0 else 0
+        tot_hrate = total_earned / tot_hours if tot_hours > 0 else 0
+        table.add_row(
+            "[bold]TOTAL[/bold]",
+            str(total_count),
+            format_duration(total_time),
+            f"[bold]{total_earned:.2f}[/bold]",
+            f"[bold]{tot_hrate:.2f}[/bold]"
+        )
+
+        console.print(table)
+
     def show_daily_summary(self, day_str: Optional[str] = None):
         """
         Show an aggregated daily summary from work_sessions.
         If day_str is None, use today's date in local time.
         Aggregation = sum duration, sum count, sum earned by task.
         """
-        if day_str is None:
-            # use local "today"
-            now_local = datetime.now(TIMEZONE)
-            day_str = now_local.strftime("%Y-%m-%d")
-
-        # Convert that local day to a 00:00 local -> UTC range
-        local_day_start = datetime.strptime(day_str, "%Y-%m-%d")
-        local_day_start = TIMEZONE.localize(local_day_start)
-        local_day_end = local_day_start + timedelta(days=1)
-        # Convert to UTC
-        day_start_utc = local_day_start.astimezone(pytz.utc)
-        day_end_utc = local_day_end.astimezone(pytz.utc)
-
-        # Fetch relevant sessions
-        c = self.execute("""
+        start_utc, end_utc = self._get_date_range_utc(day_str, False)
+        rows = self.execute("""
             SELECT task_name, duration_seconds, count, price, start_time
             FROM work_sessions
             WHERE start_time >= ? AND start_time < ?
             ORDER BY task_name
-        """, (day_start_utc.isoformat(), day_end_utc.isoformat()))
-        rows = c.fetchall()
+        """, (start_utc.isoformat(), end_utc.isoformat())).fetchall()
 
-        if not rows:
-            console.print(f"[bold magenta]No sessions found for day {day_str}[/]")
-            return
-
-        # Aggregate by task
-        aggregate = {}
-        for (task, dur, cnt, p, st) in rows:
-            if task not in aggregate:
-                aggregate[task] = {
-                    'count': 0,
-                    'duration': 0.0,
-                    'earned': 0.0
-                }
-            aggregate[task]['count'] += cnt
-            aggregate[task]['duration'] += dur
-            aggregate[task]['earned'] += (cnt * p)
-
-        table = Table(title=f"Daily Summary for {day_str}", header_style="bold magenta")
-        table.add_column("Task", style="cyan")
-        table.add_column("Count", justify="right")
-        table.add_column("Duration", justify="right")
-        table.add_column("Earned (€)", justify="right")
-        table.add_column("Hourly Rate (€ / hr)", justify="right")
-
-        total_count = 0
-        total_time = 0.0
-        total_earned = 0.0
-
-        for task in sorted(aggregate.keys()):
-            ccount = aggregate[task]['count']
-            dur = aggregate[task]['duration']
-            earned = aggregate[task]['earned']
-            hours = dur / 3600 if dur > 0 else 0
-            hourly_rate = earned / hours if hours > 0 else 0
-            table.add_row(
-                task,
-                str(ccount),
-                format_duration(dur),
-                f"{earned:.2f}",
-                f"{hourly_rate:.2f}"
-            )
-            total_count += ccount
-            total_time += dur
-            total_earned += earned
-
-        tot_hours = total_time / 3600 if total_time > 0 else 0
-        tot_hrate = total_earned / tot_hours if tot_hours > 0 else 0
-        table.add_row(
-            "[bold]TOTAL[/bold]",
-            str(total_count),
-            format_duration(total_time),
-            f"[bold]{total_earned:.2f}[/bold]",
-            f"[bold]{tot_hrate:.2f}[/bold]"
-        )
-
-        console.print(table)
+        self._generate_summary_table(rows, day_str or datetime.now(TIMEZONE).strftime("%Y-%m-%d"), False)
 
     def show_monthly_summary(self, ym_str: Optional[str] = None):
         """
         Show aggregated monthly summary. If ym_str is None, use current month (local).
         Format of ym_str = YYYY-MM
         """
-        if ym_str is None:
-            now_local = datetime.now(TIMEZONE)
-            ym_str = now_local.strftime("%Y-%m")
-
-        # parse year-month
-        year, month = ym_str.split("-")
-        year = int(year)
-        month = int(month)
-        local_month_start = datetime(year, month, 1)
-        local_month_start = TIMEZONE.localize(local_month_start)
-        # next month
-        next_month = month + 1
-        next_year = year
-        if next_month == 13:
-            next_month = 1
-            next_year += 1
-        local_month_end = datetime(next_year, next_month, 1)
-        local_month_end = TIMEZONE.localize(local_month_end)
-
-        month_start_utc = local_month_start.astimezone(pytz.utc)
-        month_end_utc = local_month_end.astimezone(pytz.utc)
-
-        c = self.execute("""
+        start_utc, end_utc = self._get_date_range_utc(ym_str, True)
+        rows = self.execute("""
             SELECT task_name, duration_seconds, count, price, start_time
             FROM work_sessions
             WHERE start_time >= ? AND start_time < ?
             ORDER BY task_name
-        """, (month_start_utc.isoformat(), month_end_utc.isoformat()))
-        rows = c.fetchall()
+        """, (start_utc.isoformat(), end_utc.isoformat())).fetchall()
 
-        if not rows:
-            console.print(f"[bold magenta]No sessions found for month {ym_str}[/]")
-            return
-
-        aggregate = {}
-        for (task, dur, cnt, p, st) in rows:
-            if task not in aggregate:
-                aggregate[task] = {
-                    'count': 0,
-                    'duration': 0.0,
-                    'earned': 0.0
-                }
-            aggregate[task]['count'] += cnt
-            aggregate[task]['duration'] += dur
-            aggregate[task]['earned'] += (cnt * p)
-
-        table = Table(title=f"Monthly Summary for {ym_str}", header_style="bold magenta")
-        table.add_column("Task", style="cyan")
-        table.add_column("Count", justify="right")
-        table.add_column("Duration", justify="right")
-        table.add_column("Earned (€)", justify="right")
-        table.add_column("Hourly Rate (€ / hr)", justify="right")
-
-        total_count = 0
-        total_time = 0.0
-        total_earned = 0.0
-
-        for task in sorted(aggregate.keys()):
-            ccount = aggregate[task]['count']
-            dur = aggregate[task]['duration']
-            earned = aggregate[task]['earned']
-            hours = dur / 3600 if dur > 0 else 0
-            hr = earned / hours if hours > 0 else 0
-            table.add_row(
-                task,
-                str(ccount),
-                format_duration(dur),
-                f"{earned:.2f}",
-                f"{hr:.2f}"
-            )
-            total_count += ccount
-            total_time += dur
-            total_earned += earned
-
-        tot_hours = total_time / 3600 if total_time > 0 else 0
-        tot_hrate = total_earned / tot_hours if tot_hours > 0 else 0
-        table.add_row(
-            "[bold]TOTAL[/bold]",
-            str(total_count),
-            format_duration(total_time),
-            f"[bold]{total_earned:.2f}[/bold]",
-            f"[bold]{tot_hrate:.2f}[/bold]"
-        )
-
-        console.print(table)
+        self._generate_summary_table(rows, ym_str or datetime.now(TIMEZONE).strftime("%Y-%m"), True)
 
 
 # --------------------------------------------------
