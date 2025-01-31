@@ -20,7 +20,7 @@ Commands:
   help, list, set-price, switch, start, pause, status,
   i <n>, stats day|month [args], exit
 """
-
+import sys
 import sqlite3
 from datetime import datetime, timedelta
 import time
@@ -379,19 +379,35 @@ def main():
     prompt_session = PromptSession()
     style = Style.from_dict({'prompt': 'ansicyan bold'})
 
+    # For real-time updates
+    last_prompt = ['']
+
+    def update_prompt():
+        while True:
+            if not tracker.paused and tracker.active_task:
+                sys.stdout.write('\r' + last_prompt[0])
+                sys.stdout.flush()
+            time.sleep(1)
+
+    # Start the update thread
+    update_thread = threading.Thread(target=update_prompt, daemon=True)
+    update_thread.start()
+
     while True:
         # Build the dynamic prompt
         if tracker.active_task:
+            count = tracker.get_today_count(tracker.active_task)
             if tracker.paused:
-                prompt_label = f"[<red>■</red> {tracker.active_task}]"
+                prompt_label = f"[<red>■</red> {tracker.active_task} ({count})]"
             else:
                 elapsed = time.time() - tracker.start_time
                 hhmmss = format_duration(elapsed)
-                prompt_label = f"[<green>●</green> {tracker.active_task} {hhmmss}]"
+                prompt_label = f"[<green>●</green> {tracker.active_task} ({count}) {hhmmss}]"
         else:
             prompt_label = "[<red>■</red> no-task]"
 
         prompt_text = HTML(f"<b>{prompt_label}</b> ➜ ")
+        last_prompt[0] = str(prompt_text)  # Store for the update thread
 
         try:
             command_line = prompt_session.prompt(prompt_text, style=style).strip()
