@@ -336,13 +336,6 @@ class TaskTracker:
         console.print(f"[green]Incremented '{current_task}' by {n}[/]")
 
     def handle_exit(self):
-        """
-        On exit, if there's an active session with any real time,
-        finalize it with count=1. Then exit.
-        """
-        if self.active_task and self.current_session_start_utc:
-            # Finalize with count=1
-            self.finalize_session(count=1)
         console.print("[bold]Exiting...[/bold]")
 
     # ------------------------------------------------
