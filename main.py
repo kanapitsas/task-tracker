@@ -42,7 +42,6 @@ Required Views:
   2) Daily summary (stats day ...)
   3) Monthly summary (stats month ...)
 """
-
 import sys
 import sqlite3
 import time
@@ -83,7 +82,7 @@ def init_db():
     );
     """)
 
-    # New: work_sessions table
+    # work_sessions table without ON DELETE CASCADE
     c.execute("""
     CREATE TABLE IF NOT EXISTS work_sessions (
         id INTEGER PRIMARY KEY,
@@ -162,7 +161,17 @@ class TaskTracker:
         return row[0] if row else None
 
     def list_tasks(self):
-        c = self.execute("SELECT name, price FROM tasks ORDER BY name")
+        """
+        List all tasks with their price and last used date,
+        sorted by last used date (recent last).
+        """
+        c = self.execute("""
+            SELECT tasks.name, tasks.price, MAX(work_sessions.start_time) as last_used
+            FROM tasks
+            LEFT JOIN work_sessions ON tasks.name = work_sessions.task_name
+            GROUP BY tasks.name
+            ORDER BY last_used ASC
+        """)
         return c.fetchall()
 
     # -------------------------
@@ -341,12 +350,13 @@ class TaskTracker:
             rows = sorted(rows, key=lambda r: r[2])  # re-sort ascending for display
 
         table = Table(title="Chronological Sessions", header_style="bold magenta")
+        table.add_column("ID", style="yellow", justify="right")
         table.add_column("Start (Local)", style="cyan")
         table.add_column("Task")
         table.add_column("Duration", justify="right")
         table.add_column("Count", justify="right")
-        table.add_column("Price(€)", justify="right")
-        table.add_column("Earned(€)", justify="right")
+        table.add_column("Price (€)", justify="right")
+        table.add_column("Earned (€)", justify="right")
 
         for (sid, task, start_iso, dur, ccount, price) in rows:
             # Convert start_iso (UTC) -> local time
@@ -355,6 +365,7 @@ class TaskTracker:
             local_str = local_dt.strftime("%Y-%m-%d %H:%M:%S")
             earned = ccount * price
             table.add_row(
+                str(sid),
                 local_str,
                 task,
                 format_duration(dur),
@@ -469,6 +480,23 @@ class TaskTracker:
 
         self._generate_summary_table(rows, ym_str or datetime.now(TIMEZONE).strftime("%Y-%m"), True)
 
+    # -------------------------
+    # Removal Methods
+    # -------------------------
+
+    def remove_session_by_id(self, session_id: int):
+        """
+        Remove a work session by its ID.
+        """
+        c = self.execute("SELECT * FROM work_sessions WHERE id = ?;", (session_id,))
+        session = c.fetchone()
+        if not session:
+            console.print(f"[red]No work session found with ID {session_id}.[/]")
+            return
+
+        self.execute("DELETE FROM work_sessions WHERE id = ?;", (session_id,))
+        console.print(f"[green]Work session with ID {session_id} has been removed.[/]")
+
 
 # --------------------------------------------------
 # MAIN CLI
@@ -542,7 +570,7 @@ def main():
   [cyan]set-price <task> <price>[/cyan]
       Create or update the price of a task.
   [cyan]list[/cyan]
-      List all known tasks and their prices.
+      List all known tasks, their prices, and last used dates, sorted by last used date.
   [cyan]status[/cyan]
       Show today's daily summary (all tasks).
   [cyan]stats day [YYYY-MM-DD][/cyan]
@@ -551,6 +579,8 @@ def main():
       Show monthly summary for a given month (defaults to current month).
   [cyan]history [n][/cyan]
       Show chronological sessions. If n is given, show only the last n sessions.
+  [cyan]rm <session_id>[/cyan]
+      Remove a work session by its ID.
   [cyan]help[/cyan]
       Show this help message.
   [cyan]exit[/cyan] / [cyan]quit[/cyan]
@@ -589,11 +619,19 @@ def main():
             if not tasks:
                 console.print("[yellow]No tasks found.[/]")
                 continue
-            table = Table(title="Known Tasks", header_style="bold blue")
+            table = Table(title="Known Tasks (Sorted by Last Used Date)", header_style="bold blue")
             table.add_column("Name", style="cyan")
             table.add_column("Price (€)", justify="right")
-            for (tn, pr) in tasks:
-                table.add_row(tn, f"{pr:.2f}")
+            table.add_column("Last Used", justify="right")
+            for (tn, pr, last_used) in tasks:
+                if last_used:
+                    # Convert start_iso (UTC) -> local time
+                    utc_dt = datetime.fromisoformat(last_used)
+                    local_dt = pytz.utc.localize(utc_dt).astimezone(TIMEZONE)
+                    local_str = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    local_str = "Never"
+                table.add_row(tn, f"{pr:.2f}", local_str)
             console.print(table)
 
         elif cmd == "status":
@@ -626,6 +664,19 @@ def main():
                 except ValueError:
                     console.print("[red]Invalid limit. Must be an integer.[/]")
             tracker.show_chronological_view(limit)
+
+        elif cmd == "rm":
+            if len(args) != 1:
+                console.print("[red]Usage: rm <session_id>[/]")
+                continue
+            target = args[0]
+            if target.isdigit():
+                # Remove work session by ID
+                session_id = int(target)
+                tracker.remove_session_by_id(session_id)
+            else:
+                console.print("[red]Invalid argument. 'rm' command only accepts work session IDs (numbers).[/]")
+                continue
 
         else:
             console.print(f"[red]Unknown command:[/] {cmd} (try 'help')")
