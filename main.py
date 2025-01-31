@@ -288,31 +288,6 @@ class TaskTracker:
 
         console.print(f"[cyan]Switched active task to '{new_task}'[/]")
 
-    def increment_current_task(self, n: int = 1):
-        """
-        When user presses ENTER (n=1) or types a number (n),
-        finalize the current in-memory session for the active task,
-        then start a brand-new session for the same task
-        preserving paused/unpaused state.
-        """
-        if not self.active_task:
-            console.print("[red]No active task to increment.[/]")
-            return
-
-        # Finalize old session
-        old_paused = self.finalize_session(count=n)
-
-        # Start a fresh session for the same task
-        same_task = self.active_task  # it was reset in finalize_session
-        # Actually we need to recall what the old active task was
-        # before finalize_session wiped it out:
-        # We'll do that in finalize_session return value or store it ahead of time
-        # Simpler: store it now:
-        old_task = self.active_task  # but it's already None after finalize? Let's do it earlier
-        # Instead, let's do:
-        # We'll do this approach:
-        # We'll just keep a local variable before finalizing:
-
     def increment_current_task(self, n: int = 1, _placeholder=None):
         """
         Overwrite of the above method to fix scoping:
