@@ -110,6 +110,7 @@ class TaskTracker:
         self.active_task: Optional[str] = None
         self.paused = True
         self.start_time: float = 0.0  # for time tracking
+        self.session_elapsed: float = 0.0  # accumulated time for current task session
 
     def __del__(self):
         self.conn.close()
@@ -197,9 +198,8 @@ class TaskTracker:
         if self.paused:
             console.print("[yellow]Already paused[/]")
             return
-        # add the time to the currently active task
-        elapsed = time.time() - self.start_time
-        self.add_time_to_task(self.active_task, elapsed)
+        # Add elapsed time to session total
+        self.session_elapsed += time.time() - self.start_time
         self.paused = True
         console.print("[green]Session paused[/]")
 
@@ -213,14 +213,22 @@ class TaskTracker:
             return
 
         # If there's an active task and we are running, add the elapsed time
-        if self.active_task and not self.paused:
-            elapsed = time.time() - self.start_time
-            self.add_time_to_task(self.active_task, elapsed)
+        if self.active_task:
+            if not self.paused:
+                self.session_elapsed += time.time() - self.start_time
+                self.add_time_to_task(self.active_task, self.session_elapsed)
+                self.session_elapsed = 0.0  # Reset after adding time
 
         self.active_task = new_task
         if not self.paused:
             self.start_time = time.time()  # reset the baseline
         console.print(f"[cyan]Switched active task to '{new_task}'[/]")
+
+    def get_current_elapsed(self) -> float:
+        """Get total elapsed time for current task session"""
+        if self.paused:
+            return self.session_elapsed
+        return self.session_elapsed + (time.time() - self.start_time)
 
     def add_time_to_task(self, task_name: str, elapsed_sec: float):
         """
@@ -233,10 +241,22 @@ class TaskTracker:
         """
         Increment the daily logs by n for the active task. This is akin to
         pressing ENTER in your original code. The user can do `i 5` or just press ENTER for `i 1`.
+
+        **Modified Behavior:**
+        - If the timer is running, add the elapsed time to the daily_logs.
+        - Reset the session_elapsed and start_time.
         """
         if not self.active_task:
             console.print("[red]No active task to increment.[/]")
             return
+
+        # If the timer is running, add the elapsed time to daily_logs
+        if not self.paused:
+            elapsed = self.get_current_elapsed()
+            self.add_time_to_task(self.active_task, elapsed)
+            self.session_elapsed = 0.0
+            self.start_time = time.time()  # Reset start time for continued timing
+
         # Store in daily_logs for today
         today_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
         self.upsert_daily_log(today_str, self.active_task, n, 0.0)
@@ -376,47 +396,35 @@ def show_stats_month(tracker: TaskTracker, ym: Optional[str]):
 
 def main():
     tracker = TaskTracker()
-    prompt_session = PromptSession()
     style = Style.from_dict({'prompt': 'ansicyan bold'})
 
-    # For real-time updates
-    last_prompt = ['']
-
-    def update_prompt():
-        while True:
-            if not tracker.paused and tracker.active_task:
-                sys.stdout.write('\r' + last_prompt[0])
-                sys.stdout.flush()
-            time.sleep(1)
-
-    # Start the update thread
-    update_thread = threading.Thread(target=update_prompt, daemon=True)
-    update_thread.start()
-
-    while True:
-        # Build the dynamic prompt
+    def get_prompt_text():
         if tracker.active_task:
             count = tracker.get_today_count(tracker.active_task)
             if tracker.paused:
                 prompt_label = f"[<red>■</red> {tracker.active_task} ({count})]"
             else:
-                elapsed = time.time() - tracker.start_time
+                elapsed = tracker.get_current_elapsed()
                 hhmmss = format_duration(elapsed)
                 prompt_label = f"[<green>●</green> {tracker.active_task} ({count}) {hhmmss}]"
         else:
             prompt_label = "[<red>■</red> no-task]"
+        return HTML(f"<b>{prompt_label}</b> ➜ ")
 
-        prompt_text = HTML(f"<b>{prompt_label}</b> ➜ ")
-        last_prompt[0] = str(prompt_text)  # Store for the update thread
-
+    while True:
         try:
-            command_line = prompt_session.prompt(prompt_text, style=style).strip()
+            # Use refresh_interval to update the prompt regularly when timer is running
+            command_line = PromptSession().prompt(
+                get_prompt_text,
+                style=style,
+                refresh_interval=1.0 if not tracker.paused and tracker.active_task else None
+            ).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[bold]Exiting...[/bold]")
             break
 
+        # Rest of the command processing remains the same
         if not command_line:
-            # If user just presses ENTER, increment by 1
             tracker.increment_current_task(1)
             continue
 
@@ -465,8 +473,10 @@ Press [Enter] with no command to increment the active task by 1.
             else:
                 try:
                     amt = int(args[0])
+                    if amt < 1:
+                        raise ValueError
                 except ValueError:
-                    console.print("[red]Invalid number[/]")
+                    console.print("[red]Invalid number. Please provide a positive integer.[/]")
                     continue
             tracker.increment_current_task(amt)
 
@@ -477,8 +487,10 @@ Press [Enter] with no command to increment the active task by 1.
             task_name = args[0]
             try:
                 price_val = float(args[1])
+                if price_val < 0:
+                    raise ValueError
             except ValueError:
-                console.print("[red]Invalid price[/]")
+                console.print("[red]Invalid price. Please provide a non-negative number.[/]")
                 continue
             tracker.set_task_price(task_name, price_val)
 
@@ -499,7 +511,7 @@ Press [Enter] with no command to increment the active task by 1.
             if tracker.active_task:
                 console.print(f"Active task: [cyan]{tracker.active_task}[/]")
                 if not tracker.paused:
-                    elapsed = time.time() - tracker.start_time
+                    elapsed = tracker.get_current_elapsed()
                     console.print(f"Running for: [green]{format_duration(elapsed)}[/]")
                 else:
                     console.print("[red]Paused[/]")
