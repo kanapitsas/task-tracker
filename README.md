@@ -1,6 +1,5 @@
 # Task Tracker CLI
 
-![License](https://img.shields.io/github/license/kanapitsas/task-tracker)
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![SQLite](https://img.shields.io/badge/SQLite-3.34.0%2B-blue)
 
@@ -52,8 +51,8 @@
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/yourusername/task-tracker-cli.git
-   cd task-tracker-cli
+   git clone https://github.com/yourusername/task-tracker.git
+   cd task-tracker
    ```
 
 2. **Create a Virtual Environment (Optional but Recommended)**
@@ -71,12 +70,6 @@
 
 
 4. **Run the Application**
-
-   ```bash
-   ./main.py
-   ```
-
-   *Or using Python:*
 
    ```bash
    python main.py
