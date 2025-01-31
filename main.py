@@ -11,14 +11,14 @@ Workflow:
   - "start" begins counting time
   - "pause" stops counting time
   - Pressing ENTER increments count for the active task by 1
-  - "i <n>" increments count by n
+  - Typing a number increments count by that number
   - Each increment is written to daily_logs for today's date,
     and time is only updated when you 'pause' or 'switch' tasks
     (i.e. we add the elapsed time to that day's row).
 
 Commands:
   help, list, set-price, switch, start, pause, status,
-  i <n>, stats day|month [args], exit
+  <number>, stats, history, exit
 """
 import sys
 import sqlite3
@@ -307,6 +307,28 @@ class TaskTracker:
         """, (year_month + "%",))
         return (year_month, c.fetchall())
 
+    def get_history(self, n: Optional[int] = None):
+        """
+        Retrieve the last n entries from daily_logs ordered by date descending.
+        If n is None, retrieve all entries for today.
+        """
+        today_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+        if n is None:
+            c = self.execute("""
+                SELECT log_date, task_name, count, total_time_seconds
+                FROM daily_logs
+                WHERE log_date = ?
+                ORDER BY log_date DESC, task_name ASC
+            """, (today_str,))
+        else:
+            c = self.execute("""
+                SELECT log_date, task_name, count, total_time_seconds
+                FROM daily_logs
+                ORDER BY log_date DESC, task_name ASC
+                LIMIT ?
+            """, (n,))
+        return c.fetchall()
+
 
 # ---------------------------------------------------------------------
 # DISPLAY UTILS
@@ -324,29 +346,39 @@ def show_stats_day(tracker: TaskTracker, day: Optional[str]):
     table.add_column("Time (H:MM:SS)", justify="right")
     table.add_column("Price (€)", justify="right")
     table.add_column("Total Earned (€)", justify="right")
+    table.add_column("Hourly Rate (€ / hr)", justify="right")
 
     total_earned = 0.0
     total_time = 0.0
     total_count = 0
 
     for (task_name, count, time_sec, price, earned) in rows:
+        hours = time_sec / 3600 if time_sec > 0 else 0
+        hourly_rate = earned / hours if hours > 0 else 0.0
         table.add_row(
             str(task_name),
             str(count),
             format_duration(time_sec),
             f"{price:.2f}",
-            f"{earned:.2f}"
+            f"{earned:.2f}",
+            f"{hourly_rate:.2f}"
         )
         total_earned += earned
         total_time += time_sec
         total_count += count
 
+    total_hours = total_time / 3600 if total_time > 0 else 0
+    total_hourly_rate = total_earned / total_hours if total_hours > 0 else 0.0
+
     # Summaries
-    table.add_row("[bold]TOTAL[/bold]",
-                  str(total_count),
-                  format_duration(total_time),
-                  "",
-                  f"[bold]{total_earned:.2f}[/bold]")
+    table.add_row(
+        "[bold]TOTAL[/bold]",
+        str(total_count),
+        format_duration(total_time),
+        "",
+        f"[bold]{total_earned:.2f}[/bold]",
+        f"[bold]{total_hourly_rate:.2f}[/bold]"
+    )
     console.print(table)
 
 
@@ -362,31 +394,65 @@ def show_stats_month(tracker: TaskTracker, ym: Optional[str]):
     table.add_column("Time (H:MM:SS)", justify="right")
     table.add_column("Price (€)", justify="right")
     table.add_column("Total Earned (€)", justify="right")
+    table.add_column("Hourly Rate (€ / hr)", justify="right")
 
     total_earned = 0.0
     total_time = 0.0
     total_count = 0
 
     for (task_name, sum_count, sum_time, price, sum_earned) in rows:
-        c = sum_count or 0
-        s = sum_time or 0
-        e = sum_earned or 0.0
+        hours = sum_time / 3600 if sum_time > 0 else 0
+        hourly_rate = sum_earned / hours if hours > 0 else 0.0
         table.add_row(
             str(task_name),
-            str(c),
-            format_duration(s),
+            str(sum_count),
+            format_duration(sum_time),
             f"{price:.2f}",
-            f"{e:.2f}"
+            f"{sum_earned:.2f}",
+            f"{hourly_rate:.2f}"
         )
-        total_earned += e
-        total_time += s
-        total_count += c
+        total_earned += sum_earned
+        total_time += sum_time
+        total_count += sum_count
 
-    table.add_row("[bold]TOTAL[/bold]",
-                  str(total_count),
-                  format_duration(total_time),
-                  "",
-                  f"[bold]{total_earned:.2f}[/bold]")
+    total_hours = total_time / 3600 if total_time > 0 else 0
+    total_hourly_rate = total_earned / total_hours if total_hours > 0 else 0.0
+
+    table.add_row(
+        "[bold]TOTAL[/bold]",
+        str(total_count),
+        format_duration(total_time),
+        "",
+        f"[bold]{total_earned:.2f}[/bold]",
+        f"[bold]{total_hourly_rate:.2f}[/bold]"
+    )
+    console.print(table)
+
+
+def show_history(tracker: TaskTracker, n: Optional[int]):
+    rows = tracker.get_history(n)
+    if not rows:
+        if n is None:
+            today_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+            console.print(f"[bold magenta]No data found for today ({today_str})[/]")
+        else:
+            console.print(f"[bold magenta]No history entries found.[/]")
+        return
+
+    table = Table(title="History", header_style="bold magenta")
+    table.add_column("Date", style="cyan")
+    table.add_column("Task", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_column("Time (H:MM:SS)", justify="right")
+
+    for (log_date, task_name, count, time_sec) in rows:
+        table.add_row(
+            log_date,
+            task_name,
+            str(count),
+            format_duration(time_sec)
+        )
+
     console.print(table)
 
 
@@ -432,6 +498,12 @@ def main():
         cmd = parts[0].lower()
         args = parts[1:]
 
+        # Check if the entire command is a number for incrementing
+        if cmd.isdigit():
+            increment_value = int(cmd)
+            tracker.increment_current_task(increment_value)
+            continue
+
         if cmd in ("exit", "quit"):
             console.print("Goodbye!")
             break
@@ -439,17 +511,17 @@ def main():
         elif cmd == "help":
             console.print("""
 [bold]Commands:[/bold]
-  [cyan]switch <task>[/cyan]        Switch active task (and pause old one if needed).
-  [cyan]start[/cyan] / [cyan]s[/cyan]             Start the timer for the current task.
-  [cyan]pause[/cyan] / [cyan]p[/cyan]             Pause the timer.
-  [cyan]i <n>[/cyan]                Increment the current task count by n.
-  [cyan]set-price <task> <price>[/cyan]  Create/update the price of a task.
-  [cyan]list[/cyan]                 List known tasks.
-  [cyan]status[/cyan]               Show partial session info (time & tasks).
-  [cyan]stats day[/cyan] [YYYY-MM-DD]  Show stats for a day (defaults to today).
-  [cyan]stats month[/cyan] [YYYY-MM]   Show stats for a month (defaults to current).
-  [cyan]help[/cyan]                 Show this help message.
-  [cyan]exit[/cyan] / [cyan]quit[/cyan]           Exit the program.
+  [cyan]switch <task>[/cyan]                  Switch active task (and pause old one if needed).
+  [cyan]start[/cyan] / [cyan]s[/cyan]                Start the timer for the current task.
+  [cyan]pause[/cyan] / [cyan]p[/cyan]                Pause the timer.
+  [cyan]<number>[/cyan]                       Increment the current task count by the specified number.
+  [cyan]set-price <task> <price>[/cyan]        Create/update the price of a task.
+  [cyan]list[/cyan]                           List known tasks.
+  [cyan]status[/cyan]                         Show total time and count for each task for today.
+  [cyan]stats[/cyan]                          Show stats for today and current month.
+  [cyan]history <n>[/cyan]                     Show the last n recorded entries. If no number is provided, show all entries for today.
+  [cyan]help[/cyan]                           Show this help message.
+  [cyan]exit[/cyan] / [cyan]quit[/cyan]               Exit the program.
 
 Press [Enter] with no command to increment the active task by 1.
             """)
@@ -467,20 +539,7 @@ Press [Enter] with no command to increment the active task by 1.
         elif cmd in ("pause", "p"):
             tracker.pause()
 
-        elif cmd in ("i", "inc"):
-            if len(args) < 1:
-                amt = 1
-            else:
-                try:
-                    amt = int(args[0])
-                    if amt < 1:
-                        raise ValueError
-                except ValueError:
-                    console.print("[red]Invalid number. Please provide a positive integer.[/]")
-                    continue
-            tracker.increment_current_task(amt)
-
-        elif cmd == "set-price":
+        elif cmd in ("set-price"):
             if len(args) < 2:
                 console.print("[red]Usage: set-price <task> <price>[/]")
                 continue
@@ -507,20 +566,58 @@ Press [Enter] with no command to increment the active task by 1.
             console.print(table)
 
         elif cmd == "status":
-            # partial session info
-            if tracker.active_task:
-                console.print(f"Active task: [cyan]{tracker.active_task}[/]")
-                if not tracker.paused:
-                    elapsed = tracker.get_current_elapsed()
-                    console.print(f"Running for: [green]{format_duration(elapsed)}[/]")
-                else:
-                    console.print("[red]Paused[/]")
-            else:
-                console.print("[yellow]No active task[/]")
+            # Show total time and count for each task for today
+            today_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+            c = tracker.execute("""
+                SELECT dl.task_name,
+                       dl.count,
+                       dl.total_time_seconds,
+                       IFNULL(t.price, 0.0) as current_price,
+                       dl.count * IFNULL(t.price, 0.0) as total_earned
+                FROM daily_logs dl
+                LEFT JOIN tasks t ON dl.task_name = t.name
+                WHERE dl.log_date = ?
+                ORDER BY dl.task_name
+            """, (today_str,))
+            rows = c.fetchall()
+            if not rows:
+                console.print(f"[yellow]No data for today ({today_str}).[/]")
+                continue
+
+            table = Table(title=f"Status for {today_str}", header_style="bold magenta")
+            table.add_column("Task", style="cyan")
+            table.add_column("Count", justify="right")
+            table.add_column("Time (H:MM:SS)", justify="right")
+            table.add_column("Total Earned (€)", justify="right")
+
+            total_earned = 0.0
+            total_time = 0.0
+            total_count = 0
+
+            for (task_name, count, time_sec, price, earned) in rows:
+                table.add_row(
+                    str(task_name),
+                    str(count),
+                    format_duration(time_sec),
+                    f"{earned:.2f}"
+                )
+                total_earned += earned
+                total_time += time_sec
+                total_count += count
+
+            table.add_row(
+                "[bold]TOTAL[/bold]",
+                str(total_count),
+                format_duration(total_time),
+                f"[bold]{total_earned:.2f}[/bold]"
+            )
+            console.print(table)
 
         elif cmd == "stats":
             if not args:
-                console.print("[red]Usage: stats <day|month> [YYYY-MM-DD|YYYY-MM][/]")
+                # Show both day and month stats
+                show_stats_day(tracker, None)
+                show_stats_month(tracker, None)
                 continue
             mode = args[0]
             date_arg = args[1] if len(args) > 1 else None
@@ -529,7 +626,20 @@ Press [Enter] with no command to increment the active task by 1.
             elif mode == "month":
                 show_stats_month(tracker, date_arg)
             else:
-                console.print("[red]Usage: stats <day|month> [arg][/]")
+                console.print("[red]Usage: stats <day|month> [YYYY-MM-DD|YYYY-MM][/]")
+
+        elif cmd == "history":
+            if len(args) >= 1:
+                try:
+                    n = int(args[0])
+                    if n < 1:
+                        raise ValueError
+                except ValueError:
+                    console.print("[red]Invalid number. Please provide a positive integer.[/]")
+                    continue
+            else:
+                n = None
+            show_history(tracker, n)
 
         else:
             console.print(f"[red]Unknown command:[/] {cmd} (try 'help')")
