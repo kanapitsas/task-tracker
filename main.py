@@ -681,7 +681,7 @@ def main():
             try:
                 is_monthly, date_str = tracker.parse_stats_arg(args[0])
             except Exception:
-                console.print("[red]Usage: stats <day|month> [YYYY-MM-DD|YYYY-MM][/]")
+                console.print("[red]Usage: stats [YYYY-MM-DD|YYYY-MM|month|yesterday][/]")
                 continue
 
             if is_monthly:
