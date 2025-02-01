@@ -465,6 +465,39 @@ class TaskTracker:
 
         self._generate_summary_table(rows, day_str or datetime.now(TIMEZONE).strftime("%Y-%m-%d"), False)
 
+    def parse_stats_arg(self, arg: str) -> tuple[bool, str]:
+        import re
+        from datetime import datetime, timedelta
+
+        arg_lower = arg.lower().strip()
+
+        # special keywords
+        if arg_lower == "yesterday":
+            yesterday = datetime.now(TIMEZONE) - timedelta(days=1)
+            return (False, yesterday.strftime("%Y-%m-%d"))
+        if arg_lower == "today":
+            today = datetime.now(TIMEZONE)
+            return (False, today.strftime("%Y-%m-%d"))
+
+        # explicit formats
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", arg):
+            return (False, arg)  # daily
+        if re.match(r"^\d{4}-\d{2}$", arg):
+            return (True, arg)  # monthly
+
+        # month name? use most recent past occurrence
+        months = {
+            "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+            "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12
+        }
+        if arg_lower in months:
+            target_month = months[arg_lower]
+            now = datetime.now(TIMEZONE)
+            year = now.year if now.month > target_month else now.year - 1
+            return (True, f"{year}-{target_month:02d}")
+
+        raise ValueError("invalid date format")
+
     def show_monthly_summary(self, ym_str: Optional[str] = None):
         """
         Show aggregated monthly summary. If ym_str is None, use current month (local).
@@ -479,6 +512,8 @@ class TaskTracker:
         """, (start_utc.isoformat(), end_utc.isoformat())).fetchall()
 
         self._generate_summary_table(rows, ym_str or datetime.now(TIMEZONE).strftime("%Y-%m"), True)
+
+
 
     # -------------------------
     # Removal Methods
@@ -640,21 +675,19 @@ def main():
 
         elif cmd == "stats":
             if not args:
-                # Show today's daily + this month's summary
                 tracker.show_daily_summary(None)
                 tracker.show_monthly_summary(None)
                 continue
-            # If we have at least 1 argument
-            mode = args[0]
-            if mode == "day":
-                dstr = args[1] if len(args) > 1 else None
-                tracker.show_daily_summary(dstr)
-            elif mode == "month":
-                mstr = args[1] if len(args) > 1 else None
-                tracker.show_monthly_summary(mstr)
-            else:
+            try:
+                is_monthly, date_str = tracker.parse_stats_arg(args[0])
+            except Exception:
                 console.print("[red]Usage: stats <day|month> [YYYY-MM-DD|YYYY-MM][/]")
                 continue
+
+            if is_monthly:
+                tracker.show_monthly_summary(date_str)
+            else:
+                tracker.show_daily_summary(date_str)
 
         elif cmd == "history":
             limit = None
