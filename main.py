@@ -500,10 +500,13 @@ class TaskTracker:
 
     def show_monthly_summary(self, ym_str: Optional[str] = None):
         """
-        Show aggregated monthly summary. If ym_str is None, use current month (local).
+        Show aggregated monthly summary plus daily breakdown.
+        If ym_str is None, use current month (local).
         Format of ym_str = YYYY-MM
         """
         start_utc, end_utc = self._get_date_range_utc(ym_str, True)
+
+        # Get all sessions for the month
         rows = self.execute("""
             SELECT task_name, duration_seconds, count, price, start_time
             FROM work_sessions
@@ -511,7 +514,45 @@ class TaskTracker:
             ORDER BY task_name
         """, (start_utc.isoformat(), end_utc.isoformat())).fetchall()
 
+        # Show the monthly summary table first
         self._generate_summary_table(rows, ym_str or datetime.now(TIMEZONE).strftime("%Y-%m"), True)
+
+        # Now create daily breakdown
+        if rows:
+            # Get daily totals
+            daily_data = self.execute("""
+                SELECT
+                    date(start_time, 'localtime') as day,
+                    SUM(duration_seconds) as total_duration,
+                    SUM(count) as total_count,
+                    SUM(count * price) as total_earned
+                FROM work_sessions
+                WHERE start_time >= ? AND start_time < ?
+                GROUP BY date(start_time, 'localtime')
+                ORDER BY day
+            """, (start_utc.isoformat(), end_utc.isoformat())).fetchall()
+
+            # Create daily breakdown table
+            table = Table(title="Daily Breakdown", header_style="bold magenta")
+            table.add_column("Date", style="cyan")
+            table.add_column("Duration", justify="right")
+            table.add_column("Count", justify="right")
+            table.add_column("Earned (€)", justify="right")
+            table.add_column("Hourly Rate (€/hr)", justify="right")
+
+            for (day, duration, count, earned) in daily_data:
+                hours = duration / 3600 if duration > 0 else 0
+                hourly_rate = earned / hours if hours > 0 else 0
+
+                table.add_row(
+                    day,
+                    format_duration(duration),
+                    str(count),
+                    f"{earned:.2f}",
+                    f"{hourly_rate:.2f}"
+                )
+
+            console.print(table)
 
 
 
