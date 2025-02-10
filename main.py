@@ -252,10 +252,28 @@ class TaskTracker:
             console.print("[yellow]Timer already running.[/]")
             return
 
+        # If paused and the last start time was more than 30 minutes ago, reset
+        if (self.paused and self.current_session_start_utc and
+            (datetime.utcnow() - self.current_session_start_utc).total_seconds() > 1800):
+            console.print("[yellow]Session was paused for over 30 minutes - resetting timer.[/]")
+            self.start_session_for_task(self.active_task)
+
         # Resume tracking
         self.paused = False
         self.timer_start_time = time.time()
         console.print("[green]Session resumed/started[/]")
+
+    def reset_current_session(self):
+        """
+        Reset the current session's timer and starting date without finalizing it.
+        """
+        if not self.active_task:
+            console.print("[red]No active task to reset.[/]")
+            return
+
+        task = self.active_task  # remember current task
+        self.start_session_for_task(task)  # this resets everything
+        console.print(f"[green]Timer reset for task '{task}'[/]")
 
     def pause(self):
         if not self.active_task:
@@ -751,6 +769,9 @@ def main():
             else:
                 console.print("[red]Invalid argument. 'rm' command only accepts work session IDs (numbers).[/]")
                 continue
+
+        elif cmd in ("rst", "reset"):
+                tracker.reset_current_session()
 
         else:
             console.print(f"[red]Unknown command:[/] {cmd} (try 'help')")
